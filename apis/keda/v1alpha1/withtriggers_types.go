@@ -29,7 +29,7 @@ import (
 
 const (
 	// Default polling interval for a ScaledObject triggers if no pollingInterval is defined.
-	defaultPollingInterval = 5
+	defaultPollingInterval = 30
 )
 
 // +kubebuilder:object:root=true
