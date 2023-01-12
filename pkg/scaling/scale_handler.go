@@ -24,6 +24,9 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
+
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/scale"
@@ -145,11 +148,19 @@ func (h *scaleHandler) startScaleLoop(ctx context.Context, withTriggers *kedav1a
 	logger.V(1).Info("Watching with pollingInterval", "PollingInterval", pollingInterval)
 
 	for {
+		checkIdle, checkNoneIdle, _ := h.CheckCurrentReplicaCount(ctx, scalableObject)
+		if !checkIdle && !checkNoneIdle {
+			time.Sleep(1 * time.Second)
+			continue
+		} else if !checkIdle && checkNoneIdle {
+			h.checkScalers(ctx, scalableObject, scalingMutex)
+			continue
+		}
 		tmr := time.NewTimer(pollingInterval)
-		h.checkScalers(ctx, scalableObject, scalingMutex)
 
 		select {
 		case <-tmr.C:
+			h.checkScalers(ctx, scalableObject, scalingMutex)
 			tmr.Stop()
 		case <-ctx.Done():
 			logger.V(1).Info("Context canceled")
@@ -161,6 +172,31 @@ func (h *scaleHandler) startScaleLoop(ctx context.Context, withTriggers *kedav1a
 			return
 		}
 	}
+}
+
+func (h *scaleHandler) CheckCurrentReplicaCount(ctx context.Context, scaledObject interface{}) (bool, bool, error) {
+	deployment := &appsv1.Deployment{}
+	switch obj := scaledObject.(type) {
+	case *kedav1alpha1.ScaledObject:
+		targetName := obj.Spec.ScaleTargetRef.Name
+		err := h.client.Get(ctx, client.ObjectKey{Name: targetName, Namespace: obj.Namespace}, deployment)
+		if err != nil {
+			klog.V(1).Infof("Error getting deployment %s: %s", targetName, err)
+			return false, false, err
+		}
+		currentReplicas := *deployment.Spec.Replicas
+		if currentReplicas > 0 && *obj.Spec.MinReplicaCount == 0 {
+			return true, false, nil
+		} else if currentReplicas == 0 && *obj.Spec.MinReplicaCount > 0 {
+			return false, true, nil
+		} else {
+			return false, false, nil
+		}
+	case *kedav1alpha1.ScaledJob:
+		klog.V(1).Infof("Getting current replica count for ScaledJob %s", obj.Name)
+		return false, false, nil
+	}
+	return false, false, fmt.Errorf("unknown scalableObject type %T", scaledObject)
 }
 
 func (h *scaleHandler) GetScalersCache(ctx context.Context, scalableObject interface{}) (*cache.ScalersCache, error) {

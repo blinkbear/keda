@@ -84,7 +84,7 @@ func parseResourceMetadata(config *ScalerConfig, logger logr.Logger) (*cpuMemory
 
 // IsActive always return true for cpu/memory scaler
 func (s *cpuMemoryScaler) IsActive(ctx context.Context) (bool, error) {
-	return true, nil
+	return false, nil
 }
 
 // Close no need for cpuMemory scaler
